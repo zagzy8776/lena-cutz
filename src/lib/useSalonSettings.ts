@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase, type SalonSettings } from '@/lib/supabase';
+import { api, type SalonSettings } from '@/lib/api';
 import { DEFAULT_SETTINGS } from '@/lib/constants';
 
 export function useSalonSettings() {
@@ -10,22 +10,20 @@ export function useSalonSettings() {
     let cancelled = false;
 
     const fetchSettings = async () => {
-      const { data } = await supabase
-        .from('salon_settings')
-        .select('*')
-        .eq('id', 1)
-        .maybeSingle();
-
-      if (!cancelled) {
-        setSettings(data || DEFAULT_SETTINGS);
-        setLoading(false);
+      try {
+        const data = await api.settings.get();
+        if (!cancelled) {
+          setSettings(data || DEFAULT_SETTINGS);
+        }
+      } catch {
+        if (!cancelled) setSettings(DEFAULT_SETTINGS);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     };
 
     fetchSettings();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   return { settings, loading };

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Lock, Loader2, Check, AlertCircle, Eye, EyeOff } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 
 export default function AdminPassword() {
   const [currentPassword, setCurrentPassword] = useState('');
@@ -38,22 +38,21 @@ export default function AdminPassword() {
 
     setLoading(true);
 
-    const { error: updateError } = await supabase.auth.updateUser({
-      password: newPassword,
-    });
-
-    if (updateError) {
-      setError(updateError.message);
-      setLoading(false);
-      return;
+    try {
+      const result = await api.auth.changePassword(currentPassword, newPassword) as { message?: string; hash?: string };
+      setSuccess(true);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      // If the server returns a new hash, show it for the user to update their .env
+      if (result?.hash) {
+        setError(`Password hash updated. Ask your developer to set ADMIN_PASSWORD_HASH=${result.hash} in server/.env`);
+      }
+      setTimeout(() => setSuccess(false), 4000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update password.');
     }
-
-    setSuccess(true);
-    setCurrentPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
     setLoading(false);
-    setTimeout(() => setSuccess(false), 4000);
   };
 
   return (

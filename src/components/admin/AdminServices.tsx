@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Save, Loader2, Plus, Trash2, Eye, EyeOff, Scissors } from 'lucide-react';
-import { supabase, type Service } from '@/lib/supabase';
+import { api, type Service } from '@/lib/api';
 import { formatPrice } from '@/lib/constants';
 
 const serviceImages: Record<string, string> = {
@@ -29,27 +29,25 @@ export default function AdminServices() {
   }, []);
 
   const fetchServices = async () => {
-    const { data } = await supabase
-      .from('services')
-      .select('*')
-      .order('sort_order', { ascending: true });
-    setServices(data || []);
+    try {
+      const data = await api.services.getAll();
+      setServices(data);
+    } catch (err) {
+      console.error(err);
+    }
     setLoading(false);
   };
 
   const updateService = async (id: string, updates: Partial<Service>) => {
     setSaving(id);
     setSaved(null);
-
-    const { error } = await supabase
-      .from('services')
-      .update(updates)
-      .eq('id', id);
-
-    if (!error) {
+    try {
+      await api.services.update(id, updates);
       setServices((prev) => prev.map((s) => (s.id === id ? { ...s, ...updates } : s)));
       setSaved(id);
       setTimeout(() => setSaved(null), 2000);
+    } catch (err) {
+      console.error(err);
     }
     setSaving(null);
   };
@@ -60,30 +58,25 @@ export default function AdminServices() {
 
   const addService = async () => {
     if (!newName.trim() || !newPrice.trim()) return;
-
     setSaving('new');
     const maxSort = Math.max(...services.map((s) => s.sort_order), 0);
-
-    const { data, error } = await supabase
-      .from('services')
-      .insert({
+    try {
+      const data = await api.services.create({
         name: newName.trim(),
         description: newDesc.trim() || null,
         price: parseFloat(newPrice),
         duration_minutes: parseInt(newDuration) || 30,
         sort_order: maxSort + 1,
         is_active: true,
-      })
-      .select()
-      .single();
-
-    if (!error && data) {
+      });
       setServices((prev) => [...prev, data]);
       setNewName('');
       setNewDesc('');
       setNewPrice('');
       setNewDuration('30');
       setShowAdd(false);
+    } catch (err) {
+      console.error(err);
     }
     setSaving(null);
   };
@@ -91,9 +84,11 @@ export default function AdminServices() {
   const deleteService = async (id: string) => {
     if (!confirm('Delete this service? Existing bookings will keep their records.')) return;
     setSaving(id);
-    const { error } = await supabase.from('services').delete().eq('id', id);
-    if (!error) {
+    try {
+      await api.services.delete(id);
       setServices((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      console.error(err);
     }
     setSaving(null);
   };

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Save, Loader2, Building2, Phone, Mail, MapPin, Instagram, MessageCircle, Clock, Check } from 'lucide-react';
-import { supabase, type SalonSettings } from '@/lib/supabase';
+import { api, type SalonSettings } from '@/lib/api';
 import { DEFAULT_SETTINGS } from '@/lib/constants';
 
 export default function AdminSettings() {
@@ -11,12 +11,12 @@ export default function AdminSettings() {
 
   useEffect(() => {
     const fetchSettings = async () => {
-      const { data } = await supabase
-        .from('salon_settings')
-        .select('*')
-        .eq('id', 1)
-        .maybeSingle();
-      setSettings(data || DEFAULT_SETTINGS);
+      try {
+        const data = await api.settings.get();
+        setSettings(data || DEFAULT_SETTINGS);
+      } catch {
+        setSettings(DEFAULT_SETTINGS);
+      }
       setLoading(false);
     };
     fetchSettings();
@@ -26,29 +26,12 @@ export default function AdminSettings() {
     if (!settings) return;
     setSaving(true);
     setSaved(false);
-
-    const { error } = await supabase
-      .from('salon_settings')
-      .update({
-        salon_name: settings.salon_name,
-        phone: settings.phone,
-        email: settings.email,
-        location: settings.location,
-        instagram: settings.instagram,
-        whatsapp: settings.whatsapp,
-        bank_name: settings.bank_name,
-        account_name: settings.account_name,
-        account_number: settings.account_number,
-        mon_fri_hours: settings.mon_fri_hours,
-        sat_hours: settings.sat_hours,
-        sun_hours: settings.sun_hours,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', 1);
-
-    if (!error) {
+    try {
+      await api.settings.update(settings);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
+    } catch (err) {
+      console.error(err);
     }
     setSaving(false);
   };

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Clock, Check, Loader2 } from 'lucide-react';
-import { supabase, type Service } from '@/lib/supabase';
+import { api, type Service } from '@/lib/api';
 import { formatPrice } from '@/lib/constants';
 
 const serviceImages: Record<string, string> = {
@@ -18,18 +18,12 @@ export default function Services() {
 
   useEffect(() => {
     const fetchServices = async () => {
-      const { data, error } = await supabase
-        .from('services')
-        .select('*')
-        .eq('is_active', true)
-        .order('sort_order', { ascending: true });
-
-      if (error) {
+      try {
+        const data = await api.services.getPublic();
+        setServices(data);
+      } catch {
         setError('Unable to load services. Please try again later.');
-        setLoading(false);
-        return;
       }
-      setServices(data || []);
       setLoading(false);
     };
     fetchServices();

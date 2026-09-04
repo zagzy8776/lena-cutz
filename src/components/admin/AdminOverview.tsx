@@ -10,7 +10,7 @@ import {
   Scissors,
   Loader2,
 } from 'lucide-react';
-import { supabase, type Booking, type Service } from '@/lib/supabase';
+import { api, type Booking, type Service } from '@/lib/api';
 import { formatPrice, formatDateShort, formatTime } from '@/lib/constants';
 
 type BookingWithServiceName = Booking & { services: Service | null };
@@ -22,18 +22,16 @@ export default function AdminOverview() {
 
   useEffect(() => {
     const fetchData = async () => {
-      const { data: bookingData } = await supabase
-        .from('bookings')
-        .select('*, services(*)')
-        .order('created_at', { ascending: false });
-
-      const { data: serviceData } = await supabase
-        .from('services')
-        .select('*')
-        .order('sort_order', { ascending: true });
-
-      setBookings((bookingData as unknown as BookingWithServiceName[]) || []);
-      setServices(serviceData || []);
+      try {
+        const [bookingData, serviceData] = await Promise.all([
+          api.bookings.getAll(),
+          api.services.getAll(),
+        ]);
+        setBookings(bookingData as unknown as BookingWithServiceName[]);
+        setServices(serviceData);
+      } catch (err) {
+        console.error(err);
+      }
       setLoading(false);
     };
     fetchData();

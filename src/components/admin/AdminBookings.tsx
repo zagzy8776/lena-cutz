@@ -11,7 +11,7 @@ import {
   Filter,
   Trash2,
 } from 'lucide-react';
-import { supabase, type Booking, type Service } from '@/lib/supabase';
+import { api, type Booking, type Service } from '@/lib/api';
 import { formatPrice, formatDate, formatTime, formatDateShort } from '@/lib/constants';
 
 type BookingWithService = Booking & { services: Service | null };
@@ -31,29 +31,27 @@ export default function AdminBookings() {
 
   const fetchBookings = async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from('bookings')
-      .select('*, services(*)')
-      .order('booking_date', { ascending: false })
-      .order('booking_time', { ascending: true });
-    setBookings((data as unknown as BookingWithService[]) || []);
+    try {
+      const data = await api.bookings.getAll();
+      setBookings(data);
+    } catch (err) {
+      console.error(err);
+    }
     setLoading(false);
   };
 
   const updateStatus = async (id: string, status: string) => {
     setUpdating(id);
-    const { error } = await supabase
-      .from('bookings')
-      .update({ status })
-      .eq('id', id);
-
-    if (!error) {
+    try {
+      await api.bookings.updateStatus(id, status as Booking['status']);
       setBookings((prev) =>
         prev.map((b) => (b.id === id ? { ...b, status: status as Booking['status'] } : b))
       );
       if (selectedBooking?.id === id) {
         setSelectedBooking({ ...selectedBooking, status: status as Booking['status'] });
       }
+    } catch (err) {
+      console.error(err);
     }
     setUpdating(null);
   };
@@ -61,10 +59,12 @@ export default function AdminBookings() {
   const deleteBooking = async (id: string) => {
     if (!confirm('Delete this booking permanently? This cannot be undone.')) return;
     setUpdating(id);
-    const { error } = await supabase.from('bookings').delete().eq('id', id);
-    if (!error) {
+    try {
+      await api.bookings.delete(id);
       setBookings((prev) => prev.filter((b) => b.id !== id));
       if (selectedBooking?.id === id) setSelectedBooking(null);
+    } catch (err) {
+      console.error(err);
     }
     setUpdating(null);
   };

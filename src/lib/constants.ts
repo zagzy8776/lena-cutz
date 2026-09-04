@@ -1,4 +1,4 @@
-import type { SalonSettings } from '@/lib/supabase';
+import type { SalonSettings } from '@/lib/api';
 
 export const DEFAULT_SETTINGS: SalonSettings = {
   id: 1,

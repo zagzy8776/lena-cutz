@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase, type Session } from '@/lib/supabase';
+import { api, type Session } from '@/lib/api';
 import Navbar from '@/components/Navbar';
 import Hero from '@/components/Hero';
 import Services from '@/components/Services';
@@ -26,29 +26,11 @@ function App() {
     return () => window.removeEventListener('hashchange', checkRoute);
   }, []);
 
-  // Auth state
+  // Auth state - check localStorage token
   useEffect(() => {
-    let cancelled = false;
-
-    const getInitialSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!cancelled) {
-        setSession(data.session);
-        setAuthLoading(false);
-      }
-    };
-    getInitialSession();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      if (!cancelled) {
-        setSession(newSession);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      authListener.subscription.unsubscribe();
-    };
+    const { session: existing } = api.auth.getSession();
+    setSession(existing);
+    setAuthLoading(false);
   }, []);
 
   // Admin route
@@ -62,10 +44,10 @@ function App() {
     }
 
     if (!session) {
-      return <AdminLogin onSuccess={() => {}} />;
+      return <AdminLogin onSuccess={(s) => setSession(s)} />;
     }
 
-    return <AdminApp onLogout={() => setSession(null)} />;
+    return <AdminApp onLogout={() => { api.auth.signOut(); setSession(null); }} />;
   }
 
   // Customer site

@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Lock, Mail, Loader2, AlertCircle, Scissors } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { api, type Session } from '@/lib/api';
 
-export default function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
+export default function AdminLogin({ onSuccess }: { onSuccess: (session: Session) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -18,25 +18,14 @@ export default function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
     setLoading(true);
     setError(null);
 
-    const { data, error: signInError } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password: password,
-    });
-
-    if (signInError) {
-      setError(
-        signInError.message.includes('Invalid login')
-          ? 'Wrong email or password. Please try again.'
-          : signInError.message
-      );
+    try {
+      const { session } = await api.auth.signInWithPassword({ email: email.trim(), password });
+      if (session) onSuccess(session);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Wrong email or password. Please try again.');
+    } finally {
       setLoading(false);
-      return;
     }
-
-    if (data.session) {
-      onSuccess();
-    }
-    setLoading(false);
   };
 
   return (
@@ -109,7 +98,7 @@ export default function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
           </form>
 
           <p className="mt-6 text-center text-xs text-ink-500">
-            Use the email and password you set up for your account.
+            Use the email and password set up for your admin account.
           </p>
         </div>
 

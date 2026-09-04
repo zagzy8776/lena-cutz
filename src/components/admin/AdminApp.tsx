@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   LayoutDashboard,
   CalendarDays,
@@ -10,7 +10,7 @@ import {
   X,
   ExternalLink,
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import AdminOverview from '@/components/admin/AdminOverview';
 import AdminBookings from '@/components/admin/AdminBookings';
 import AdminServices from '@/components/admin/AdminServices';
@@ -32,7 +32,7 @@ export default function AdminApp({ onLogout }: { onLogout: () => void }) {
   ];
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await api.auth.signOut();
     onLogout();
   };
 
