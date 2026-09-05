@@ -1,7 +1,8 @@
-// Central API client. Set VITE_API_URL to the deployed Express API URL in production.
-// Local Vite development keeps using the local server automatically.
+// Central API client. Set VITE_API_URL to override the deployed Express API URL.
+// Production defaults to the deployed Lena Cutz API so the frontend cannot silently
+// call itself and receive an empty/non-API response.
 const configuredBaseUrl = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
-const BASE_URL = configuredBaseUrl || (import.meta.env.DEV ? 'http://localhost:3001' : '');
+const BASE_URL = configuredBaseUrl || (import.meta.env.DEV ? 'http://localhost:3001' : 'https://lena-cutz.onrender.com');
 
 export function getToken(): string | null { return localStorage.getItem('lena_cutz_admin_token'); }
 export function setToken(token: string) { localStorage.setItem('lena_cutz_admin_token', token); }
@@ -27,7 +28,7 @@ export const api={
  auth:{
   signInWithPassword:async({email,password}:{email:string;password:string}):Promise<{session:Session}>=>{const data=await request<Session>('/api/auth/login',{method:'POST',body:JSON.stringify({email,password})});setToken(data.token);return{session:data};},
   signOut:()=>{clearToken();return Promise.resolve();},
-  getSession:():{session:Session|null}=>{const token=getToken();if(!token)return{session:null};try{const payload=JSON.parse(atob(token.split('.')[1]));if(!payload?.exp||payload.exp*1000<Date.now()){clearToken();return{session:null};}return{session:{token,email:payload.email}}}catch{clearToken();return{session:null};}},
+  getSession:():{session:Session|null}=>{const token=getToken();if(!token)return{session:null};try{const payload=JSON.parse(atob(token.split('.')[1]));if(!payload?.exp||payload.exp*1000<Date.now()){clearToken();return{session:null};}return{session:{token,email:payload.email}}}catch{clearToken();return{session:null}}},
   changePassword:(currentPassword:string,newPassword:string)=>request<{message:string}>('/api/auth/change-password',{method:'POST',body:JSON.stringify({currentPassword,newPassword})}),
  },
  services:{
