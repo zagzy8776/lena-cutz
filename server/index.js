@@ -5,294 +5,311 @@ import { neon } from '@neondatabase/serverless';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { createServer } from 'http';
-import WebSocket, { WebSocketServer } from 'ws';
 
 const app = express();
 const httpServer = createServer(app);
 
-// --- Config ---
 const DB_URL = process.env.DATABASE_URL;
 const JWT_SECRET = process.env.JWT_SECRET || 'lena-cutz-dev-secret';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'juditheberechi274@gmail.com';
-// bcrypt hash of admin password. Generate with: node -e "import('bcryptjs').then(b=>b.default.hash('yourpassword',10).then(console.log))"
 const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || '';
-// Fallback plaintext password for development (remove in production)
 const ADMIN_PASSWORD_PLAIN = process.env.ADMIN_PASSWORD_PLAIN || '';
 const PORT = Number(process.env.PORT) || 3001;
 
 if (!DB_URL) {
-  console.error('ERROR: DATABASE_URL is not set in server/.env');
+  console.error('ERROR: DATABASE_URL is not set.');
   process.exit(1);
 }
 
 const sql = neon(DB_URL);
 
-app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:3000'], credentials: true }));
-app.use(express.json());
+// Allow local development and configured production frontends. When the API is
+// served from the same origin, no CORS header is needed, but permissive defaults
+// here keep the separate Vite + Express deployment usable.
+const allowedOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+app.use(cors({
+  origin: allowedOrigins.length ? allowedOrigins : true,
+  credentials: true,
+}));
+app.use(express.json({ limit: '1mb' }));
 
-// --- Auth Middleware ---
 function requireAuth(req, res, next) {
   const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    const payload = jwt.verify(auth.slice(7), JWT_SECRET);
-    req.admin = payload;
+    req.admin = jwt.verify(auth.slice(7), JWT_SECRET);
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
 
-// ============================================================
-// AUTH ROUTES
-// ============================================================
-
-// POST /api/auth/login
-app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required.' });
-
-  if (email.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
-    return res.status(401).json({ error: 'Wrong email or password. Please try again.' });
+app.get('/api/health', async (_req, res) => {
+  try {
+    await sql`SELECT 1`;
+    res.json({ status: 'ok', db: 'connected', provider: 'neon' });
+  } catch (err) {
+    console.error('Health check failed:', err);
+    res.status(500).json({ status: 'error', db: 'disconnected', error: 'Database unavailable' });
   }
+});
+
+// AUTH
+app.post('/api/auth/login', async (req, res) => {
+  const email = String(req.body?.email || '').trim();
+  const password = String(req.body?.password || '');
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required.' });
+  if (email.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) return res.status(401).json({ error: 'Wrong email or password. Please try again.' });
 
   let valid = false;
-  if (ADMIN_PASSWORD_HASH) {
-    valid = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
-  } else if (ADMIN_PASSWORD_PLAIN) {
-    valid = password === ADMIN_PASSWORD_PLAIN;
-  } else {
-    return res.status(500).json({ error: 'Admin password not configured. Set ADMIN_PASSWORD_HASH in server/.env' });
-  }
+  if (ADMIN_PASSWORD_HASH) valid = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+  else if (ADMIN_PASSWORD_PLAIN) valid = password === ADMIN_PASSWORD_PLAIN;
+  else return res.status(500).json({ error: 'Admin password is not configured.' });
 
   if (!valid) return res.status(401).json({ error: 'Wrong email or password. Please try again.' });
-
   const token = jwt.sign({ email: ADMIN_EMAIL }, JWT_SECRET, { expiresIn: '12h' });
   res.json({ token, email: ADMIN_EMAIL });
 });
 
-// POST /api/auth/change-password
 app.post('/api/auth/change-password', requireAuth, async (req, res) => {
-  const { currentPassword, newPassword } = req.body;
+  const currentPassword = String(req.body?.currentPassword || '');
+  const newPassword = String(req.body?.newPassword || '');
   if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Both passwords required.' });
   if (newPassword.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters.' });
 
   let valid = false;
-  if (ADMIN_PASSWORD_HASH) {
-    valid = await bcrypt.compare(currentPassword, ADMIN_PASSWORD_HASH);
-  } else if (ADMIN_PASSWORD_PLAIN) {
-    valid = currentPassword === ADMIN_PASSWORD_PLAIN;
-  }
+  if (ADMIN_PASSWORD_HASH) valid = await bcrypt.compare(currentPassword, ADMIN_PASSWORD_HASH);
+  else if (ADMIN_PASSWORD_PLAIN) valid = currentPassword === ADMIN_PASSWORD_PLAIN;
   if (!valid) return res.status(401).json({ error: 'Current password is incorrect.' });
 
-  const newHash = await bcrypt.hash(newPassword, 10);
-  res.json({ 
-    message: 'Password hash generated. Update ADMIN_PASSWORD_HASH in server/.env with this value:',
-    hash: newHash
+  const hash = await bcrypt.hash(newPassword, 10);
+  res.json({
+    message: 'Password hash generated. Replace ADMIN_PASSWORD_HASH in the server environment.',
+    hash,
   });
 });
 
-// ============================================================
-// SERVICES ROUTES
-// ============================================================
-
-// GET /api/services
-app.get('/api/services', async (req, res) => {
+// SERVICES
+app.get('/api/services', async (_req, res) => {
   try {
-    const rows = await sql`
-      SELECT * FROM services 
-      WHERE is_active = true 
-      ORDER BY sort_order ASC, created_at ASC
-    `;
+    const rows = await sql`SELECT * FROM services WHERE is_active = true ORDER BY sort_order ASC, created_at ASC`;
     res.json(rows);
   } catch (err) {
-    console.error(err);
+    console.error('Public services failed:', err);
     res.status(500).json({ error: 'Failed to fetch services.' });
   }
 });
 
-// GET /api/admin/services (all, including inactive)
-app.get('/api/admin/services', requireAuth, async (req, res) => {
+app.get('/api/admin/services', requireAuth, async (_req, res) => {
   try {
     const rows = await sql`SELECT * FROM services ORDER BY sort_order ASC, created_at ASC`;
     res.json(rows);
   } catch (err) {
-    console.error(err);
+    console.error('Admin services failed:', err);
     res.status(500).json({ error: 'Failed to fetch services.' });
   }
 });
 
-// POST /api/admin/services
 app.post('/api/admin/services', requireAuth, async (req, res) => {
-  const { name, description, duration_minutes, price, image_url, sort_order, is_active } = req.body;
-  if (!name || !duration_minutes || price == null) {
-    return res.status(400).json({ error: 'name, duration_minutes and price are required.' });
+  const { name, description, duration_minutes, price, image_url, sort_order, is_active } = req.body || {};
+  const duration = Number(duration_minutes);
+  const amount = Number(price);
+  if (!String(name || '').trim() || !Number.isFinite(duration) || duration <= 0 || !Number.isFinite(amount) || amount < 0) {
+    return res.status(400).json({ error: 'name, duration_minutes and a valid price are required.' });
   }
   try {
     const rows = await sql`
       INSERT INTO services (name, description, duration_minutes, price, image_url, sort_order, is_active)
-      VALUES (${name}, ${description || null}, ${duration_minutes}, ${price}, ${image_url || null}, ${sort_order || 0}, ${is_active !== false})
+      VALUES (${String(name).trim()}, ${description ? String(description).trim() : null}, ${duration}, ${amount}, ${image_url || null}, ${Number(sort_order) || 0}, ${is_active !== false})
       RETURNING *
     `;
     res.status(201).json(rows[0]);
   } catch (err) {
-    console.error(err);
+    console.error('Create service failed:', err);
     res.status(500).json({ error: 'Failed to create service.' });
   }
 });
 
-// PATCH /api/admin/services/:id
 app.patch('/api/admin/services/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
-  const { name, description, duration_minutes, price, image_url, sort_order, is_active } = req.body;
+  const body = req.body || {};
   try {
+    const name = body.name === undefined ? null : String(body.name).trim();
+    const description = body.description === undefined ? null : (body.description === '' ? null : String(body.description).trim());
+    const duration = body.duration_minutes === undefined ? null : Number(body.duration_minutes);
+    const price = body.price === undefined ? null : Number(body.price);
+    const imageUrl = body.image_url === undefined ? null : body.image_url;
+    const sortOrder = body.sort_order === undefined ? null : Number(body.sort_order);
+    const active = body.is_active === undefined ? null : Boolean(body.is_active);
+
+    if (duration !== null && (!Number.isFinite(duration) || duration <= 0)) return res.status(400).json({ error: 'Duration must be a positive number.' });
+    if (price !== null && (!Number.isFinite(price) || price < 0)) return res.status(400).json({ error: 'Price must be a valid non-negative number.' });
+
     const rows = await sql`
       UPDATE services SET
         name = COALESCE(${name}, name),
-        description = COALESCE(${description}, description),
-        duration_minutes = COALESCE(${duration_minutes}, duration_minutes),
+        description = CASE WHEN ${body.description !== undefined} THEN ${description} ELSE description END,
+        duration_minutes = COALESCE(${duration}, duration_minutes),
         price = COALESCE(${price}, price),
-        image_url = COALESCE(${image_url}, image_url),
-        sort_order = COALESCE(${sort_order}, sort_order),
-        is_active = COALESCE(${is_active}, is_active)
+        image_url = CASE WHEN ${body.image_url !== undefined} THEN ${imageUrl} ELSE image_url END,
+        sort_order = COALESCE(${sortOrder}, sort_order),
+        is_active = COALESCE(${active}, is_active)
       WHERE id = ${id}
       RETURNING *
     `;
-    if (rows.length === 0) return res.status(404).json({ error: 'Service not found.' });
+    if (!rows.length) return res.status(404).json({ error: 'Service not found.' });
     res.json(rows[0]);
   } catch (err) {
-    console.error(err);
+    console.error('Update service failed:', err);
     res.status(500).json({ error: 'Failed to update service.' });
   }
 });
 
-// DELETE /api/admin/services/:id
 app.delete('/api/admin/services/:id', requireAuth, async (req, res) => {
-  const { id } = req.params;
   try {
-    await sql`DELETE FROM services WHERE id = ${id}`;
+    const rows = await sql`DELETE FROM services WHERE id = ${req.params.id} RETURNING id`;
+    if (!rows.length) return res.status(404).json({ error: 'Service not found.' });
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
+    console.error('Delete service failed:', err);
     res.status(500).json({ error: 'Failed to delete service.' });
   }
 });
 
-// ============================================================
-// BOOKINGS ROUTES
-// ============================================================
-
-// POST /api/bookings (public - customer creates booking)
-app.post('/api/bookings', async (req, res) => {
-  const { service_id, customer_name, customer_phone, customer_email, booking_date, booking_time, notes } = req.body;
-  if (!service_id || !customer_name || !customer_phone || !booking_date || !booking_time) {
-    return res.status(400).json({ error: 'Missing required booking fields.' });
-  }
+// AVAILABILITY
+app.get('/api/availability', async (req, res) => {
+  const date = String(req.query?.date || '').trim();
+  const serviceId = String(req.query?.service_id || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'A valid date (YYYY-MM-DD) is required.' });
   try {
     const rows = await sql`
+      SELECT to_char(booking_time, 'HH24:MI') AS booking_time
+      FROM bookings
+      WHERE booking_date = ${date} AND status IN ('pending', 'confirmed')
+      ${serviceId ? sql`AND service_id = ${serviceId}` : sql``}
+    `;
+    res.json({ date, booked_slots: rows.map((row) => row.booking_time) });
+  } catch (err) {
+    console.error('Availability failed:', err);
+    res.status(500).json({ error: 'Failed to fetch availability.' });
+  }
+});
+
+// BOOKINGS
+app.post('/api/bookings', async (req, res) => {
+  const { service_id, customer_name, customer_phone, customer_email, booking_date, booking_time, notes } = req.body || {};
+  if (!service_id || !customer_name || !customer_phone || !booking_date || !booking_time) return res.status(400).json({ error: 'Missing required booking fields.' });
+  try {
+    const service = await sql`SELECT id, duration_minutes FROM services WHERE id = ${service_id} AND is_active = true LIMIT 1`;
+    if (!service.length) return res.status(400).json({ error: 'Selected service is no longer available.' });
+
+    const conflict = await sql`
+      SELECT id FROM bookings
+      WHERE booking_date = ${booking_date}
+        AND booking_time = ${booking_time}
+        AND status IN ('pending', 'confirmed')
+      LIMIT 1
+    `;
+    if (conflict.length) return res.status(409).json({ error: 'That time has already been booked. Please choose another time.' });
+
+    const rows = await sql`
       INSERT INTO bookings (service_id, customer_name, customer_phone, customer_email, booking_date, booking_time, notes, status)
-      VALUES (${service_id}, ${customer_name}, ${customer_phone}, ${customer_email || null}, ${booking_date}, ${booking_time}, ${notes || null}, 'pending')
+      VALUES (${service_id}, ${String(customer_name).trim()}, ${String(customer_phone).trim()}, ${customer_email ? String(customer_email).trim() : null}, ${booking_date}, ${booking_time}, ${notes ? String(notes).trim() : null}, 'pending')
       RETURNING *
     `;
     res.status(201).json(rows[0]);
   } catch (err) {
-    console.error(err);
+    console.error('Create booking failed:', err);
     res.status(500).json({ error: 'Failed to create booking.' });
   }
 });
 
-// GET /api/admin/bookings
-app.get('/api/admin/bookings', requireAuth, async (req, res) => {
+app.get('/api/admin/bookings', requireAuth, async (_req, res) => {
   try {
     const rows = await sql`
-      SELECT b.*, 
-             json_build_object('id', s.id, 'name', s.name, 'price', s.price, 'duration_minutes', s.duration_minutes) as services
+      SELECT b.*, CASE WHEN s.id IS NULL THEN NULL ELSE json_build_object(
+        'id', s.id, 'name', s.name, 'price', s.price, 'duration_minutes', s.duration_minutes,
+        'description', s.description, 'image_url', s.image_url, 'is_active', s.is_active,
+        'sort_order', s.sort_order, 'created_at', s.created_at
+      ) END AS services
       FROM bookings b
       LEFT JOIN services s ON b.service_id = s.id
-      ORDER BY b.booking_date DESC, b.booking_time ASC
+      ORDER BY b.booking_date DESC, b.booking_time ASC, b.created_at DESC
     `;
     res.json(rows);
   } catch (err) {
-    console.error(err);
+    console.error('Admin bookings failed:', err);
     res.status(500).json({ error: 'Failed to fetch bookings.' });
   }
 });
 
-// PATCH /api/admin/bookings/:id/status
 app.patch('/api/admin/bookings/:id/status', requireAuth, async (req, res) => {
-  const { id } = req.params;
-  const { status } = req.body;
-  const valid = ['pending', 'confirmed', 'cancelled', 'completed'];
-  if (!valid.includes(status)) return res.status(400).json({ error: 'Invalid status.' });
+  const status = req.body?.status;
+  if (!['pending', 'confirmed', 'cancelled', 'completed'].includes(status)) return res.status(400).json({ error: 'Invalid status.' });
   try {
-    const rows = await sql`
-      UPDATE bookings SET status = ${status} WHERE id = ${id} RETURNING *
-    `;
-    if (rows.length === 0) return res.status(404).json({ error: 'Booking not found.' });
+    const rows = await sql`UPDATE bookings SET status = ${status} WHERE id = ${req.params.id} RETURNING *`;
+    if (!rows.length) return res.status(404).json({ error: 'Booking not found.' });
     res.json(rows[0]);
   } catch (err) {
-    console.error(err);
+    console.error('Update booking failed:', err);
     res.status(500).json({ error: 'Failed to update booking status.' });
   }
 });
 
-// DELETE /api/admin/bookings/:id
 app.delete('/api/admin/bookings/:id', requireAuth, async (req, res) => {
-  const { id } = req.params;
   try {
-    await sql`DELETE FROM bookings WHERE id = ${id}`;
+    const rows = await sql`DELETE FROM bookings WHERE id = ${req.params.id} RETURNING id`;
+    if (!rows.length) return res.status(404).json({ error: 'Booking not found.' });
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
+    console.error('Delete booking failed:', err);
     res.status(500).json({ error: 'Failed to delete booking.' });
   }
 });
 
-// ============================================================
-// SALON SETTINGS ROUTES
-// ============================================================
-
-// GET /api/settings (public)
-app.get('/api/settings', async (req, res) => {
+// SETTINGS
+app.get('/api/settings', async (_req, res) => {
   try {
-    const rows = await sql`SELECT * FROM salon_settings LIMIT 1`;
+    const rows = await sql`SELECT * FROM salon_settings ORDER BY id ASC LIMIT 1`;
     res.json(rows[0] || null);
   } catch (err) {
-    console.error(err);
+    console.error('Get settings failed:', err);
     res.status(500).json({ error: 'Failed to fetch settings.' });
   }
 });
 
-// PATCH /api/admin/settings
 app.patch('/api/admin/settings', requireAuth, async (req, res) => {
-  const fields = req.body;
-  if (!fields || Object.keys(fields).length === 0) return res.status(400).json({ error: 'No fields provided.' });
+  const fields = req.body || {};
+  const allowed = ['salon_name', 'phone', 'email', 'location', 'instagram', 'whatsapp', 'bank_name', 'account_name', 'account_number', 'mon_fri_hours', 'sat_hours', 'sun_hours'];
+  const clean = Object.fromEntries(Object.entries(fields).filter(([key]) => allowed.includes(key)));
+  if (!Object.keys(clean).length) return res.status(400).json({ error: 'No valid fields provided.' });
   try {
-    const existing = await sql`SELECT id FROM salon_settings LIMIT 1`;
+    const existing = await sql`SELECT id FROM salon_settings ORDER BY id ASC LIMIT 1`;
     let rows;
-    if (existing.length === 0) {
+    if (!existing.length) {
       rows = await sql`
         INSERT INTO salon_settings (salon_name, phone, email, location, instagram, whatsapp, bank_name, account_name, account_number, mon_fri_hours, sat_hours, sun_hours)
-        VALUES (${fields.salon_name||''}, ${fields.phone||''}, ${fields.email||''}, ${fields.location||''}, ${fields.instagram||''}, ${fields.whatsapp||''}, ${fields.bank_name||null}, ${fields.account_name||null}, ${fields.account_number||null}, ${fields.mon_fri_hours||''}, ${fields.sat_hours||''}, ${fields.sun_hours||''})
+        VALUES (${clean.salon_name || 'Lena Cutz'}, ${clean.phone || ''}, ${clean.email || ''}, ${clean.location || ''}, ${clean.instagram || ''}, ${clean.whatsapp || ''}, ${clean.bank_name || null}, ${clean.account_name || null}, ${clean.account_number || null}, ${clean.mon_fri_hours || '8:00 AM – 8:00 PM'}, ${clean.sat_hours || '8:00 AM – 9:00 PM'}, ${clean.sun_hours || '12:00 PM – 6:00 PM'})
         RETURNING *
       `;
     } else {
       rows = await sql`
         UPDATE salon_settings SET
-          salon_name = COALESCE(${fields.salon_name}, salon_name),
-          phone = COALESCE(${fields.phone}, phone),
-          email = COALESCE(${fields.email}, email),
-          location = COALESCE(${fields.location}, location),
-          instagram = COALESCE(${fields.instagram}, instagram),
-          whatsapp = COALESCE(${fields.whatsapp}, whatsapp),
-          bank_name = COALESCE(${fields.bank_name}, bank_name),
-          account_name = COALESCE(${fields.account_name}, account_name),
-          account_number = COALESCE(${fields.account_number}, account_number),
-          mon_fri_hours = COALESCE(${fields.mon_fri_hours}, mon_fri_hours),
-          sat_hours = COALESCE(${fields.sat_hours}, sat_hours),
-          sun_hours = COALESCE(${fields.sun_hours}, sun_hours),
+          salon_name = COALESCE(${clean.salon_name ?? null}, salon_name),
+          phone = COALESCE(${clean.phone ?? null}, phone),
+          email = COALESCE(${clean.email ?? null}, email),
+          location = COALESCE(${clean.location ?? null}, location),
+          instagram = COALESCE(${clean.instagram ?? null}, instagram),
+          whatsapp = COALESCE(${clean.whatsapp ?? null}, whatsapp),
+          bank_name = CASE WHEN ${Object.prototype.hasOwnProperty.call(clean, 'bank_name')} THEN ${clean.bank_name || null} ELSE bank_name END,
+          account_name = CASE WHEN ${Object.prototype.hasOwnProperty.call(clean, 'account_name')} THEN ${clean.account_name || null} ELSE account_name END,
+          account_number = CASE WHEN ${Object.prototype.hasOwnProperty.call(clean, 'account_number')} THEN ${clean.account_number || null} ELSE account_number END,
+          mon_fri_hours = COALESCE(${clean.mon_fri_hours ?? null}, mon_fri_hours),
+          sat_hours = COALESCE(${clean.sat_hours ?? null}, sat_hours),
+          sun_hours = COALESCE(${clean.sun_hours ?? null}, sun_hours),
           updated_at = NOW()
         WHERE id = ${existing[0].id}
         RETURNING *
@@ -300,55 +317,37 @@ app.patch('/api/admin/settings', requireAuth, async (req, res) => {
     }
     res.json(rows[0]);
   } catch (err) {
-    console.error(err);
+    console.error('Update settings failed:', err);
     res.status(500).json({ error: 'Failed to update settings.' });
   }
 });
 
-// ============================================================
-// ADMIN OVERVIEW (stats)
-// ============================================================
-app.get('/api/admin/overview', requireAuth, async (req, res) => {
+// OVERVIEW
+app.get('/api/admin/overview', requireAuth, async (_req, res) => {
   try {
     const [bookingStats] = await sql`
-      SELECT 
-        COUNT(*) FILTER (WHERE status = 'pending') as pending_count,
-        COUNT(*) FILTER (WHERE status = 'confirmed') as confirmed_count,
-        COUNT(*) FILTER (WHERE status = 'completed') as completed_count,
-        COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled_count,
-        COUNT(*) FILTER (WHERE booking_date = CURRENT_DATE) as today_count,
-        COALESCE(SUM(s.price) FILTER (WHERE b.status = 'completed'), 0) as total_revenue
-      FROM bookings b
-      LEFT JOIN services s ON b.service_id = s.id
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'pending') AS pending_count,
+        COUNT(*) FILTER (WHERE status = 'confirmed') AS confirmed_count,
+        COUNT(*) FILTER (WHERE status = 'completed') AS completed_count,
+        COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled_count,
+        COUNT(*) FILTER (WHERE booking_date = CURRENT_DATE) AS today_count,
+        COALESCE(SUM(s.price) FILTER (WHERE b.status = 'completed'), 0) AS total_revenue
+      FROM bookings b LEFT JOIN services s ON b.service_id = s.id
     `;
-    const [serviceStats] = await sql`SELECT COUNT(*) as total FROM services WHERE is_active = true`;
+    const [serviceStats] = await sql`SELECT COUNT(*) FILTER (WHERE is_active = true) AS total FROM services`;
     const recentBookings = await sql`
-      SELECT b.*, 
-             json_build_object('name', s.name, 'price', s.price) as services
-      FROM bookings b
-      LEFT JOIN services s ON b.service_id = s.id
-      ORDER BY b.created_at DESC LIMIT 5
+      SELECT b.*, CASE WHEN s.id IS NULL THEN NULL ELSE json_build_object('id', s.id, 'name', s.name, 'price', s.price, 'duration_minutes', s.duration_minutes) END AS services
+      FROM bookings b LEFT JOIN services s ON b.service_id = s.id
+      ORDER BY b.created_at DESC LIMIT 8
     `;
     res.json({ ...bookingStats, total_services: serviceStats.total, recent_bookings: recentBookings });
   } catch (err) {
-    console.error(err);
+    console.error('Overview failed:', err);
     res.status(500).json({ error: 'Failed to fetch overview.' });
   }
 });
 
-// ============================================================
-// HEALTH CHECK
-// ============================================================
-app.get('/api/health', async (req, res) => {
-  try {
-    await sql`SELECT 1`;
-    res.json({ status: 'ok', db: 'connected', provider: 'neon' });
-  } catch (err) {
-    res.status(500).json({ status: 'error', db: 'disconnected', error: err.message });
-  }
-});
-
 httpServer.listen(PORT, () => {
-  console.log(`✅ Lena Cutz API running on http://localhost:${PORT}`);
-  console.log(`   Database: Neon PostgreSQL`);
+  console.log(`✅ Lena Cutz API listening on port ${PORT}`);
 });
