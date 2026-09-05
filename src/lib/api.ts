@@ -1,9 +1,9 @@
-// Neon-backed API client — replaces Supabase
-// All calls go to our Express server which connects securely to Neon PostgreSQL.
+// Central API client. In production, VITE_API_URL should point at the deployed Express API.
+// When the frontend and API share an origin, leaving VITE_API_URL empty makes calls same-origin.
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const configuredBaseUrl = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
+const BASE_URL = configuredBaseUrl;
 
-// Auth token helpers
 export function getToken(): string | null {
   return localStorage.getItem('lena_cutz_admin_token');
 }
@@ -23,24 +23,26 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
     headers: {
+      Accept: 'application/json',
       'Content-Type': 'application/json',
       ...authHeaders(),
       ...options.headers,
     },
   });
+
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error || `Request failed: ${res.status}`);
+  if (!res.ok) {
+    throw new Error(data?.error || `Request failed (${res.status})`);
+  }
   return data as T;
 }
-
-// ── Types ────────────────────────────────────────────────────────────────────
 
 export type Service = {
   id: string;
   name: string;
   description: string | null;
   duration_minutes: number;
-  price: number;
+  price: number | string;
   image_url: string | null;
   sort_order: number;
   is_active: boolean;
@@ -82,8 +84,7 @@ export type SalonSettings = {
 };
 
 export type Session = { token: string; email: string };
-
-// ── Auth ─────────────────────────────────────────────────────────────────────
+export type Availability = { date: string; booked_slots: string[] };
 
 export const api = {
   auth: {
@@ -102,61 +103,44 @@ export const api = {
     getSession: (): { session: Session | null } => {
       const token = getToken();
       if (!token) return { session: null };
-      // Basic expiry check
       try {
         const payload = JSON.parse(atob(token.split('.')[1]));
-        if (payload.exp * 1000 < Date.now()) {
+        if (!payload?.exp || payload.exp * 1000 < Date.now()) {
           clearToken();
           return { session: null };
         }
         return { session: { token, email: payload.email } };
       } catch {
+        clearToken();
         return { session: null };
       }
     },
-    changePassword: async (currentPassword: string, newPassword: string) => {
-      return request('/api/auth/change-password', {
+    changePassword: (currentPassword: string, newPassword: string) =>
+      request('/api/auth/change-password', {
         method: 'POST',
         body: JSON.stringify({ currentPassword, newPassword }),
-      });
-    },
+      }),
   },
-
-  // ── Services ────────────────────────────────────────────────────────────────
   services: {
     getPublic: () => request<Service[]>('/api/services'),
     getAll: () => request<Service[]>('/api/admin/services'),
-    create: (data: Partial<Service>) =>
-      request<Service>('/api/admin/services', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id: string, data: Partial<Service>) =>
-      request<Service>(`/api/admin/services/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-    delete: (id: string) =>
-      request<{ success: boolean }>(`/api/admin/services/${id}`, { method: 'DELETE' }),
+    create: (data: Partial<Service>) => request<Service>('/api/admin/services', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: Partial<Service>) => request<Service>(`/api/admin/services/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    delete: (id: string) => request<{ success: boolean }>(`/api/admin/services/${id}`, { method: 'DELETE' }),
   },
-
-  // ── Bookings ─────────────────────────────────────────────────────────────────
   bookings: {
-    create: (data: Partial<Booking>) =>
-      request<Booking>('/api/bookings', { method: 'POST', body: JSON.stringify(data) }),
+    create: (data: Partial<Booking>) => request<Booking>('/api/bookings', { method: 'POST', body: JSON.stringify(data) }),
+    getAvailability: (date: string, serviceId?: string) => request<Availability>(`/api/availability?date=${encodeURIComponent(date)}${serviceId ? `&service_id=${encodeURIComponent(serviceId)}` : ''}`),
     getAll: () => request<BookingWithService[]>('/api/admin/bookings'),
-    updateStatus: (id: string, status: BookingStatus) =>
-      request<Booking>(`/api/admin/bookings/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
-    delete: (id: string) =>
-      request<{ success: boolean }>(`/api/admin/bookings/${id}`, { method: 'DELETE' }),
+    updateStatus: (id: string, status: BookingStatus) => request<Booking>(`/api/admin/bookings/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+    delete: (id: string) => request<{ success: boolean }>(`/api/admin/bookings/${id}`, { method: 'DELETE' }),
   },
-
-  // ── Settings ─────────────────────────────────────────────────────────────────
   settings: {
     get: () => request<SalonSettings | null>('/api/settings'),
-    update: (data: Partial<SalonSettings>) =>
-      request<SalonSettings>('/api/admin/settings', { method: 'PATCH', body: JSON.stringify(data) }),
+    update: (data: Partial<SalonSettings>) => request<SalonSettings>('/api/admin/settings', { method: 'PATCH', body: JSON.stringify(data) }),
   },
-
-  // ── Overview ─────────────────────────────────────────────────────────────────
   overview: {
     get: () => request<Record<string, unknown>>('/api/admin/overview'),
   },
-
-  // ── Health ───────────────────────────────────────────────────────────────────
-  health: () => request<{ status: string; db: string }>('/api/health'),
+  health: () => request<{ status: string; db: string; provider?: string }>('/api/health'),
 };
