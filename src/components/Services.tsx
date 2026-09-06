@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Clock, Check, Loader2, RefreshCw } from 'lucide-react';
 import { api, type Service } from '@/lib/api';
 import { formatPrice } from '@/lib/constants';
@@ -15,23 +15,19 @@ export default function Services() {
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] = useState('All');
 
   const fetchServices = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setServices(await api.services.getPublic());
-    } catch (err) {
-      console.error('Services load failed:', err);
-      setError(err instanceof Error ? err.message : 'Unable to load services.');
-    } finally {
-      setLoading(false);
-    }
+    setLoading(true); setError(null);
+    try { setServices(await api.services.getPublic()); }
+    catch (err) { console.error('Services load failed:', err); setError(err instanceof Error ? err.message : 'Unable to load services.'); }
+    finally { setLoading(false); }
   };
 
-  useEffect(() => {
-    fetchServices();
-  }, []);
+  useEffect(() => { fetchServices(); }, []);
+
+  const categories = useMemo(() => ['All', ...Array.from(new Set(services.map(s => s.category_name).filter(Boolean) as string[]))], [services]);
+  const visibleServices = activeCategory === 'All' ? services : services.filter(s => s.category_name === activeCategory);
 
   return (
     <section id="services" className="relative bg-ink-950 py-24 sm:py-32">
@@ -46,33 +42,33 @@ export default function Services() {
         {loading ? (
           <div className="flex items-center justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-gold-500" /></div>
         ) : error ? (
-          <div className="mx-auto mt-12 max-w-lg rounded-2xl border border-ink-700 bg-ink-900 p-8 text-center">
-            <p className="text-ink-300">{error}</p>
-            <button onClick={fetchServices} className="btn-outline mt-5 !py-2.5"><RefreshCw className="h-4 w-4" />Retry</button>
-          </div>
+          <div className="mx-auto mt-12 max-w-lg rounded-2xl border border-ink-700 bg-ink-900 p-8 text-center"><p className="text-ink-300">{error}</p><button onClick={fetchServices} className="btn-outline mt-5 !py-2.5"><RefreshCw className="h-4 w-4" />Retry</button></div>
         ) : services.length === 0 ? (
           <div className="mt-12 rounded-2xl border border-ink-700 bg-ink-900 py-16 text-center text-ink-400">No services are currently available.</div>
         ) : (
-          <div className="mt-16 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {services.map((service, index) => (
-              <div key={service.id} className="group relative overflow-hidden rounded-2xl border border-ink-700 bg-ink-900 transition-all duration-500 hover:border-gold-500/40 hover:shadow-xl hover:shadow-gold-500/5 animate-fade-in-up opacity-0" style={{ animationDelay: `${index * 0.1}s` }}>
-                <div className="relative h-56 overflow-hidden">
-                  <img src={serviceImages[service.name] || service.image_url || ''} alt={service.name} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110" loading="lazy" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-ink-900 via-ink-900/20 to-transparent" />
-                  <div className="absolute bottom-4 right-4 rounded-full bg-gold-500 px-4 py-1.5 text-sm font-bold text-ink-950 shadow-lg">{formatPrice(Number(service.price))}</div>
-                </div>
-                <div className="p-6">
-                  <h3 className="font-display text-2xl font-bold text-ink-50">{service.name}</h3>
-                  <p className="mt-2 min-h-10 text-sm leading-relaxed text-ink-400">{service.description || 'Professional service from Lena Cutz.'}</p>
-                  <div className="mt-4 flex items-center gap-4">
-                    <span className="flex items-center gap-1.5 text-xs text-ink-300"><Clock className="h-3.5 w-3.5 text-gold-500" />{service.duration_minutes} min</span>
-                    <span className="flex items-center gap-1.5 text-xs text-ink-300"><Check className="h-3.5 w-3.5 text-gold-500" />Unisex</span>
+          <>
+            {categories.length > 1 && <div className="mt-10 flex flex-wrap justify-center gap-2">
+              {categories.map(category => <button key={category} onClick={() => setActiveCategory(category)} className={`rounded-full px-5 py-2 text-sm font-semibold transition-all ${activeCategory === category ? 'bg-gold-500 text-ink-950' : 'border border-ink-700 bg-ink-900 text-ink-300 hover:border-gold-500/50 hover:text-gold-400'}`}>{category}</button>)}
+            </div>}
+            <div className="mt-12 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              {visibleServices.map((service, index) => (
+                <div key={service.id} className="group relative overflow-hidden rounded-2xl border border-ink-700 bg-ink-900 transition-all duration-500 hover:border-gold-500/40 hover:shadow-xl hover:shadow-gold-500/5 animate-fade-in-up opacity-0" style={{ animationDelay: `${index * 0.1}s` }}>
+                  <div className="relative h-56 overflow-hidden">
+                    <img src={serviceImages[service.name] || service.image_url || ''} alt={service.name} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110" loading="lazy" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-ink-900 via-ink-900/20 to-transparent" />
+                    {service.category_name && <div className="absolute left-4 top-4 rounded-full border border-white/20 bg-ink-950/75 px-3 py-1 text-xs font-semibold text-gold-300 backdrop-blur">{service.category_name}</div>}
+                    <div className="absolute bottom-4 right-4 rounded-full bg-gold-500 px-4 py-1.5 text-sm font-bold text-ink-950 shadow-lg">{formatPrice(Number(service.price))}</div>
                   </div>
-                  <a href="#booking" className="mt-5 flex w-full items-center justify-center rounded-full border border-ink-600 py-2.5 text-sm font-semibold text-ink-100 transition-all duration-300 hover:border-gold-500 hover:bg-gold-500 hover:text-ink-950">Book This Cut</a>
+                  <div className="p-6">
+                    <h3 className="font-display text-2xl font-bold text-ink-50">{service.name}</h3>
+                    <p className="mt-2 min-h-10 text-sm leading-relaxed text-ink-400">{service.description || 'Professional service from Lena Cutz.'}</p>
+                    <div className="mt-4 flex items-center gap-4"><span className="flex items-center gap-1.5 text-xs text-ink-300"><Clock className="h-3.5 w-3.5 text-gold-500" />{service.duration_minutes} min</span><span className="flex items-center gap-1.5 text-xs text-ink-300"><Check className="h-3.5 w-3.5 text-gold-500" />Unisex</span></div>
+                    <a href="#booking" className="mt-5 flex w-full items-center justify-center rounded-full border border-ink-600 py-2.5 text-sm font-semibold text-ink-100 transition-all duration-300 hover:border-gold-500 hover:bg-gold-500 hover:text-ink-950">Book This Cut</a>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
     </section>
