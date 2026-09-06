@@ -2,6 +2,7 @@ import { useEffect, useState, type ChangeEvent, type ReactNode } from 'react';
 import { Save, Loader2, Plus, Trash2, Eye, EyeOff, Scissors, Pencil, FolderOpen, Upload, Image as ImageIcon, X } from 'lucide-react';
 import { api, type Category, type Service } from '@/lib/api';
 import { formatPrice } from '@/lib/constants';
+import { uploadImageToCloudinary } from '@/lib/cloudinary';
 
 const serviceImages: Record<string, string> = {
   'Low Cut': 'https://images.pexels.com/photos/7447151/pexels-photo-7447151.jpeg?auto=compress&cs=tinysrgb&w=800',
@@ -11,14 +12,7 @@ const serviceImages: Record<string, string> = {
   '3 Step': 'https://images.pexels.com/photos/9971240/pexels-photo-9971240.jpeg?auto=compress&cs=tinysrgb&w=800',
 };
 
-const imageToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
-  if (!file.type.startsWith('image/')) return reject(new Error('Please choose an image file.'));
-  if (file.size > 650 * 1024) return reject(new Error('Please choose an image under 650 KB.'));
-  const reader = new FileReader();
-  reader.onload = () => resolve(String(reader.result));
-  reader.onerror = () => reject(new Error('Could not read the image.'));
-  reader.readAsDataURL(file);
-});
+const imageToDataUrl = async (file: File) => uploadImageToCloudinary(file);
 
 export default function AdminServices() {
   const [services, setServices] = useState<Service[]>([]);
@@ -105,7 +99,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) { re
 function ImagePicker({ value, onChange, onError }: { value: string | null; onChange: (value: string | null) => void; onError: (message: string) => void }) {
   const [uploading, setUploading] = useState(false);
   const handleChange = async (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (!file) return; setUploading(true); try { onChange(await imageToDataUrl(file)); } catch (err) { onError(err instanceof Error ? err.message : 'Could not upload image.'); } finally { setUploading(false); } event.target.value = ''; };
-  return <div className="flex items-center gap-3"><label className="flex h-16 flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-ink-600 bg-ink-950 text-sm text-ink-400 hover:border-gold-500 hover:text-gold-400"><input type="file" accept="image/*" onChange={handleChange} className="hidden" />{uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}{value ? 'Change photo' : 'Upload photo'}</label>{value && <img src={value} alt="Preview" className="h-16 w-16 rounded-xl object-cover" />}{value && <button type="button" onClick={() => onChange(null)} className="text-ink-500 hover:text-red-400"><X className="h-4 w-4" /></button>}</div>;
+  return <div className="flex items-center gap-3"><label className="flex h-16 flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-ink-600 bg-ink-950 text-sm text-ink-400 hover:border-gold-500 hover:text-gold-400"><input type="file" accept="image/*" onChange={handleChange} className="hidden" />{uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}{uploading ? 'Uploading…' : value ? 'Change photo' : 'Upload photo'}</label>{value && <img src={value} alt="Preview" className="h-16 w-16 rounded-xl object-cover" />}{value && <button type="button" onClick={() => onChange(null)} className="text-ink-500 hover:text-red-400"><X className="h-4 w-4" /></button>}</div>;
 }
 function ServiceEditCard({ service, categories, saving, saved, onSave, onToggleActive, onDelete, onNotify }: { service: Service; categories: Category[]; saving: boolean; saved: boolean; onSave: (id: string, updates: Partial<Service>) => void; onToggleActive: (service: Service) => void; onDelete: (id: string) => void; onNotify: (message: string) => void }) {
   const [price, setPrice] = useState(service.price.toString());
