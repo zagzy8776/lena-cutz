@@ -1,6 +1,4 @@
 // Central API client. Set VITE_API_URL to override the deployed Express API URL.
-// Production defaults to the deployed Lena Cutz API so the frontend cannot silently
-// call itself and receive an empty/non-API response.
 const configuredBaseUrl = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
 const BASE_URL = configuredBaseUrl || (import.meta.env.DEV ? 'http://localhost:3001' : 'https://lena-cutz.onrender.com');
 
@@ -16,7 +14,8 @@ async function request<T>(path:string, options:RequestInit={}):Promise<T>{
  return data as T;
 }
 
-export type Service={id:string;name:string;description:string|null;duration_minutes:number;price:number|string;image_url:string|null;sort_order:number;is_active:boolean;created_at:string};
+export type Category={id:string;name:string;created_at:string;service_count?:number};
+export type Service={id:string;name:string;description:string|null;duration_minutes:number;price:number|string;image_url:string|null;sort_order:number;is_active:boolean;created_at:string;category_id:string|null;category_name?:string|null};
 export type BookingStatus='pending'|'confirmed'|'cancelled'|'completed';
 export type Booking={id:string;service_id:string;customer_name:string;customer_phone:string;customer_email:string|null;booking_date:string;booking_time:string;status:BookingStatus;notes:string|null;created_at:string};
 export type BookingWithService=Booking&{services:Service|null};
@@ -30,6 +29,13 @@ export const api={
   signOut:()=>{clearToken();return Promise.resolve();},
   getSession:():{session:Session|null}=>{const token=getToken();if(!token)return{session:null};try{const payload=JSON.parse(atob(token.split('.')[1]));if(!payload?.exp||payload.exp*1000<Date.now()){clearToken();return{session:null};}return{session:{token,email:payload.email}}}catch{clearToken();return{session:null}}},
   changePassword:(currentPassword:string,newPassword:string)=>request<{message:string}>('/api/auth/change-password',{method:'POST',body:JSON.stringify({currentPassword,newPassword})}),
+ },
+ categories:{
+  getPublic:()=>request<Category[]>('/api/categories'),
+  getAll:()=>request<Category[]>('/api/admin/categories'),
+  create:(name:string)=>request<Category>('/api/admin/categories',{method:'POST',body:JSON.stringify({name})}),
+  update:(id:string,name:string)=>request<Category>(`/api/admin/categories/${id}`,{method:'PATCH',body:JSON.stringify({name})}),
+  delete:(id:string)=>request<{success:boolean}>(`/api/admin/categories/${id}`,{method:'DELETE'}),
  },
  services:{
   getPublic:()=>request<Service[]>('/api/services'),getAll:()=>request<Service[]>('/api/admin/services'),
